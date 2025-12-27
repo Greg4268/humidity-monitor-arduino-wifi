@@ -24,16 +24,20 @@ LiquidCrystal lcd(rs, en, d4, d5, d6, d7);
 // LED pins 
 const int RED_LED = 10, YELLOW_LED = 9, GREEN_LED = 8;
 
-// alert status for server
-enum AlertStatus { 
-  GOOD, 
-  WARNING_APPROACHING, 
-  WARNING_BAD
+enum humidityRanges {
+  HIGH = 1,
+  CLOSE_HIGH = 2, 
+  CLOSE_LOW = 3, 
+  LOW = 4, 
+  GOOD = 5 
 };
 
-// Keep track of current and previous status to detect changes
-AlertStatus currentStatus = GOOD;
-AlertStatus previousStatus = GOOD;  // Initialize to same as current to avoid initial alert
+struct sensorState {
+  float humidity,
+  float temperature, 
+  humidityRanges condition, 
+  time_t timestamp
+};
 
 // moist terrarium humidity constants 
 enum terrarium {
@@ -51,10 +55,10 @@ enum indoor {
   INDOOR_HIGH = 60
 };
 
-// Forward declare all functions
+const CLEAN_SENSOR_THRESHOLD = 70; 
+
 void connectToWiFi();
-void sendAlertToServer(AlertStatus status);
-bool isHighHumidity(int currHumidity, bool measureIndoor);
+void sendAlertToServer(sensorState state);
 char isHumidityGoodBadOrBetweenTerrarium(int currHumidity);
 char isHumidityGoodBadOrBetweenIndoor(int currHumidity);
 void lowHumidityWarningLCD();
@@ -71,7 +75,8 @@ const int buzzer = 6;
 // humidity and temperature sensor 
 Adafruit_Si7021 sensor = Adafruit_Si7021();
 bool enableHeater = false;
-uint8_t loopCnt = 0;
+
+sensorState state; 
 
 //  for status tracking and sending
 bool firstRun = true;  // Flag to track first run
@@ -85,18 +90,16 @@ void setup() {
   pinMode(buzzer, OUTPUT);
   // begin serial 
   Serial.begin(115200);
-  delay(1000);
-  
-  if(!sensor.begin()){
-    Serial.println("Did not find Si7021");
-    while(true)
-      ;
-  }
-  Serial.println("Found Si7021");
+  while(!Serial) delay(10);
   delay(500);
+  Serial.println("Found Si7021");
 
   // connect to WiFi
-  connectToWiFi();
+  bool connected = connectToWiFi(1);
+  if(!connected){
+    print("Error connecting to wifi on initial setup. Exiting.")
+    return
+  };
 
   // start lcd 
   Serial.println("Starting LCD connection");
@@ -107,206 +110,184 @@ void setup() {
   lcd.print("Starting...");
   delay(2000);
   lcd.clear();
+
+  previousStatus = sensor.readHumidity();
 }
 
 void loop() {
-  Serial.print("Humidity:    ");
-  Serial.print(sensor.readHumidity(), 2);
-  Serial.print("\tTemperature: ");
-  Serial.println(sensor.readTemperature(), 2);
-
-  // Toggle heater enabled state every 30 seconds to clean sensors
-  if (++loopCnt == 30) {
-    enableHeater = !enableHeater;
-    sensor.heater(enableHeater);
-    Serial.print("Heater Enabled State: ");
-    if (sensor.isHeaterEnabled())
-      Serial.println("ENABLED");
-    else
-      Serial.println("DISABLED");
-       
-    loopCnt = 0;
-  }
-
-  int currHumidity = sensor.readHumidity();
-  char condition; 
-  
-  if(measureIndoor){
-    condition = isHumidityGoodBadOrBetweenIndoor(currHumidity);
-  } else {
-    condition = isHumidityGoodBadOrBetweenTerrarium(currHumidity);
-    // b == bad
-    // c == close
-    // g == good 
-  }
-
   // Save the previous status before updating
-  previousStatus = currentStatus;
+  previousStatus = state.condition;
+  getSensorReadings();
 
-  // Update the current status based on the condition
-  if(condition == 'b'){
-    if(isHighHumidity(currHumidity, measureIndoor)) {
-      // humidity came back true == high humidity 
-      triggerLEDAndBuzzer(condition);
-      highHumidityWarningLCD();
-      currentStatus = WARNING_BAD;
-      Serial.print("WARNING: Humidity too high: ");
-      Serial.println(currHumidity);
-    }
-    else {
-      // humidity came back false == low humidity 
-      triggerLEDAndBuzzer(condition);
-      lowHumidityWarningLCD();
-      currentStatus = WARNING_BAD;
-      Serial.print("WARNING: Humidity too low: ");
-      Serial.println(currHumidity);
-    }
-  }
-  else if (condition == 'c') {
-    triggerLEDAndBuzzer(condition);
-    closeHumidityWarningLCD();
-    currentStatus = WARNING_APPROACHING;
-    Serial.print("WARNING: Humidity is getting out of ideal range: ");
-    Serial.println(currHumidity);
-  }
-  else {
-    triggerLEDAndBuzzer(condition);
-    currentStatus = GOOD;
-    lcd.clear();
-    lcd.print("Humidity: GOOD");
-    lcd.setCursor(0, 1);
-    lcd.print("Value: ");
-    lcd.print(currHumidity);
-    lcd.print("%");
-  }
+  Serial.print("Humidity: ");
+  Serial.println(state.humidity);
+
+  triggerLEDAndBuzzer(state);
+  triggerLCD(state);
 
   // Send alert only if status has changed or it's the first run or periodic update time
   unsigned long currentTime = millis();
-  if (firstRun || currentStatus != previousStatus || 
+  if (firstRun || state.condition != previousStatus || 
       (currentTime - lastStatusSentTime >= statusSendInterval)) {
     
-    sendAlertToServer(currentStatus);
+    sendAlertToServer(state.condition);
     lastStatusSentTime = currentTime;
     
     if (firstRun) {
       firstRun = false;
       Serial.println("Initial status sent");
-    } else if (currentStatus != previousStatus) {
+    } else if (state.condition != previousStatus) {
       Serial.println("Status changed - alert sent");
     } else {
       Serial.println("Periodic status update sent");
     }
   }
 
-  delay(5000);  // adjust for updat speed
+  cleanSensor(state);
 }
 
-bool isHighHumidity(int currHumidity, bool measureIndoor) {
-  if(!measureIndoor && currHumidity >= TERRARIUM_HIGH){
-    return true;
-  }
-  else if (measureIndoor && currHumidity >= INDOOR_HIGH) {
-    return true;
-  }
-  return false;
-}
 
-char isHumidityGoodBadOrBetweenTerrarium(int currHumidity){
-  if(currHumidity >= TERRARIUM_HIGH || currHumidity <= TERRARIUM_LOW){
-    return 'b';
+char isHumidityGoodBadOrBetweenTerrarium(int humidity){
+  if(humidity >= TERRARIUM_HIGH){
+    return HIGH;
   }
-  if(currHumidity >= TERRARIUM_CLOSE_HIGH || currHumidity <= TERRARIUM_CLOSE_LOW){
-    return 'c';
+  else if (humidity <= TERRARIUM_LOW) {
+    return LOW; 
   }
-  return 'g';
+  if(humidity >= TERRARIUM_CLOSE_HIGH){
+    return CLOSE_HIGH;
+  }
+  else if (humidity <= TERRARIUM_CLOSE_LOW) {
+    return CLOSE_LOW;
+  }
+  return GOOD;
 } 
 
-char isHumidityGoodBadOrBetweenIndoor(int currHumidity){
-  if(currHumidity >= INDOOR_HIGH || currHumidity <= INDOOR_LOW){
-    return 'b';
+char isHumidityGoodBadOrBetweenIndoor(int humidity){
+  if(humidity >= INDOOR_HIGH || humidity <= INDOOR_LOW) {
+    return HIGH;
   }
-  if(currHumidity >= INDOOR_CLOSE_HIGH || currHumidity <= INDOOR_CLOSE_LOW){
-    return 'c';
+  else if(humidity <= INDOOR_LOW) {
+    return LOW 
   }
-  return 'g';
+  if(humidity >= INDOOR_CLOSE_HIGH) {
+    return CLOSE_HIGH;
+  }
+  else if(humidity <= INDOOR_CLOSE_LOW) {
+    return CLOSE_LOW;
+  }
+  return GOOD;
 } 
 
-void lowHumidityWarningLCD() {
-  lcd.clear();
-  for(byte i = 0; i < 3; i++){
-    lcd.print("WARNING");
-    delay(200);
-    lcd.clear();
-    delay(50);
+void triggerLCD(sensorState state) {
+  switch(state.condition) {
+    case HIGH: 
+      lcd.clear();
+      for(byte i = 0; i < 3; i++){
+        lcd.print("WARNING");
+        delay(200);
+        lcd.clear();
+        delay(50);  
+      }
+      lcd.print("Humidity HIGH!");
+      lcd.setCursor(0, 1);
+      lcd.print("Value: ");
+      lcd.print(sensor.readHumidity(), 1);
+      lcd.print("%");
+      break;
+    case CLOSE_HIGH:
+      lcd.clear();
+      lcd.print("Out of ideal");
+      delay(1000);
+      lcd.clear();
+      lcd.print("humidity range");
+      lcd.setCursor(0, 1);
+      lcd.print("Value: ");
+      lcd.print(sensor.readHumidity(), 1);
+      lcd.print("%");
+      break;
+    case GOOD:
+      lcd.clear();
+      lcd.print("Humidity: GOOD");
+      lcd.setCursor(0, 1);
+      lcd.print("Value: ");
+      lcd.print(currHumidity);
+      lcd.print("%");
+      break;
+    case CLOSE_LOW:
+      lcd.clear();
+      lcd.print("Out of ideal");
+      delay(1000);
+      lcd.clear();
+      lcd.print("humidity range");
+      lcd.setCursor(0, 1);
+      lcd.print("Value: ");
+      lcd.print(sensor.readHumidity(), 1);
+      lcd.print("%");
+      break;
+    case LOW:
+      lcd.clear();
+      for(byte i = 0; i < 3; i++){
+        lcd.print("WARNING");
+        delay(200);
+        lcd.clear();
+        delay(50);
+      }
+      lcd.print("Humidity LOW!");
+      lcd.setCursor(0, 1);
+      lcd.print("Value: ");
+      lcd.print(sensor.readHumidity(), 1);
+      lcd.print("%");
+      break;
+    default:
+      println("There was an unknown error with the input.")
+      break;
   }
-  lcd.print("Humidity LOW!");
-  lcd.setCursor(0, 1);
-  lcd.print("Value: ");
-  lcd.print(sensor.readHumidity(), 1);
-  lcd.print("%");
 }
 
-void closeHumidityWarningLCD() {
-  lcd.clear();
-  lcd.print("Out of ideal");
-  delay(1000);
-  lcd.clear();
-  lcd.print("humidity range");
-  lcd.setCursor(0, 1);
-  lcd.print("Value: ");
-  lcd.print(sensor.readHumidity(), 1);
-  lcd.print("%");
-}
-
-void highHumidityWarningLCD() {
-  lcd.clear();
-  for(byte i = 0; i < 3; i++){
-    lcd.print("WARNING");
-    delay(200);
-    lcd.clear();
-    delay(50);  
-  }
-  lcd.print("Humidity HIGH!");
-  lcd.setCursor(0, 1);
-  lcd.print("Value: ");
-  lcd.print(sensor.readHumidity(), 1);
-  lcd.print("%");
-}
-
-void triggerLEDAndBuzzer(char condition) {
+void triggerLEDAndBuzzer(sensorState state) {
   // Turn all LEDs off first
   digitalWrite(RED_LED, LOW);
   digitalWrite(YELLOW_LED, LOW);
   digitalWrite(GREEN_LED, LOW);
   noTone(buzzer);
   
-  if(condition == 'g'){
+  if(state.condition == GOOD){
     digitalWrite(GREEN_LED, HIGH);
     delay(200);
   }
-  else if(condition == 'b'){
+  else if(state.condition == HIGH || state.condition == LOW){
     digitalWrite(RED_LED, HIGH);
     tone(buzzer, 500);
     delay(200);
   }
-  else if (condition == 'c') {
+  else if (state.condition == CLOSE_HIGH || state.condition == CLOSE_LOW) {
     digitalWrite(YELLOW_LED, HIGH);
     tone(buzzer, 800);
     delay(200);
   }
 }
 
-void sendAlertToServer(AlertStatus status) {
+void sendAlertToServer(sensorState state) {
+  status = state.condition;
   String statusString;
 
+  // this could be done better 
+  // statusString are weird 
   switch(status) {
     case GOOD:
       statusString = "good";
       break;
-    case WARNING_APPROACHING:
+    case CLOSE_HIGH:
       statusString = "warning(approaching bad)";
       break;
-    case WARNING_BAD:
+    case CLOSE_LOW:
+      statusString = "warning(approaching bad)";
+      break;
+    case LOW:
+      statusString = "warning(bad)";
+      break;
+    case HIGH: 
       statusString = "warning(bad)";
       break;
   }
@@ -323,7 +304,7 @@ void sendAlertToServer(AlertStatus status) {
 
   if(WiFi.status() != WL_CONNECTED) {
     Serial.println("WiFi not connected; Attempting to reconnect...");
-    connectToWiFi();
+    connectToWiFi(1); // retries 3 times, 45 seconds total checking at 500ms increments 
     if(WiFi.status() != WL_CONNECTED) {
       Serial.println("Failed to reconnect. Cannot send alert ;(");
       return;
@@ -346,7 +327,7 @@ void sendAlertToServer(AlertStatus status) {
   }
   
   if (connected) {
-    Serial.println("connected!");
+    Serial.println("connected to server!");
     
     // Send the HTTP request
     client.println("POST " + String(path) + " HTTP/1.1");
@@ -385,19 +366,18 @@ void sendAlertToServer(AlertStatus status) {
   }
 }
 
-void connectToWiFi() {
-  // Print connecting message
-  Serial.print("Attempting to connect to SSID: ");
-  Serial.println(ssid);
-  
+// flow
+// attempt to connect -> check status 30 times with 500ms delays then confirm connection -> else: print status, recall function up to 3 times or 45 seconds total 
+bool connectToWiFi(int retries = 1) {
+  if(retries > 3) return false; // avoid infinite loop 
   // Initialize connection counter
   int connectionAttempts = 0;
-  const int maxAttempts = 20;  // Maximum number of attempts (10 seconds)
+  const int maxAttempts = 30;  // Maximum number of attempts (15 seconds) => (30 attemps * 500 millisecond delay)
   
   // Start WiFi connection
   WiFi.begin(ssid, pass);
   
-  // Check WiFi status properly with timeout
+  // Wait for WiFi to connect 
   while (WiFi.status() != WL_CONNECTED && connectionAttempts < maxAttempts) {
     delay(500);
     Serial.print(".");
@@ -412,29 +392,39 @@ void connectToWiFi() {
   } else {
     Serial.println("\nFailed to connect to WiFi!");
     Serial.print("WiFi status: ");
-    
-    // Print status code in a human-readable form
-    switch (WiFi.status()) {
-      case WL_IDLE_STATUS:
-        Serial.println("IDLE");
-        break;
-      case WL_NO_SSID_AVAIL:
-        Serial.println("NO SSID AVAILABLE - Check WiFi name");
-        break;
-      case WL_CONNECT_FAILED:
-        Serial.println("CONNECTION FAILED - Check password");
-        break;
-      case WL_DISCONNECTED:
-        Serial.println("DISCONNECTED");
-        break;
-      default:
-        Serial.println(WiFi.status());
-        break;
-    }
-    
-    // Wait a bit before trying again
-    delay(3000);
+    Serial.println(WiFi.status())
     Serial.println("Retrying connection...");
-    connectToWiFi();  
+    connectToWiFi(connectCalls + 1);  
+  }
+  return true;
+}
+
+void getSensorReadings() {
+  state.humidity = sensor.readHumidity();
+  state.temperature = sensor.readTemperature();
+
+  if(measureIndoor){
+    state.condition = isHumidityGoodBadOrBetweenIndoor(state.humidity);
+  } else {
+    state.condition = isHumidityGoodBadOrBetweenTerrarium(state.humidity);
+  }
+
+  // get a timestamp of these readings 
+  state.timestamp = 1; // placeholder 
+}
+
+void cleanSensor(sensorState state) {
+  // Toggle heater to clean sensor (use sparingly when high humidity is achieved)
+  if (state.humidity > CLEAN_SENSOR_THRESHOLD) {
+    enableHeater = !enableHeater;
+    sensor.heater(enableHeater);
+    Serial.print("Heater Enabled State: ");
+    if (sensor.isHeaterEnabled()) {
+      Serial.println("ENABLED");
+      delay(3000); // run for only 3 seconds 
+      enableHeater = !enableHeater;
+    } else {
+      Serial.println("DISABLED");
+    }
   }
 }

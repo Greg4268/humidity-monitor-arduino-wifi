@@ -256,26 +256,6 @@ def update_alert():
         logger.error(f"Error updating alert: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-# API endpoint to get current alert status (useful for clients that need to check)
-@app.route('/get-alert', methods=['GET'])
-def get_alert():
-    return jsonify(current_alert), 200
-
-# API endpoint for dashboard analytics
-@app.route('/api/analytics', methods=['GET'])
-@auth.login_required
-def get_analytics():
-    """Get analytics data for AJAX updates"""
-    try:
-        analytics = get_status_analytics()
-        return jsonify({
-            'current_alert': current_alert,
-            'analytics': analytics
-        }), 200
-    except Exception as e:
-        logger.error(f"Error getting analytics: {str(e)}")
-        return jsonify({'error': str(e)}), 500
-
 # Data export endpoint
 @app.route('/export-data')
 @auth.login_required

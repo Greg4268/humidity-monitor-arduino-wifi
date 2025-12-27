@@ -294,4 +294,4 @@ The web dashboard provides a simple interface to monitor your system's status fr
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the Unlicense License - see the LICENSE file for details.
