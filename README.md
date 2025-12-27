@@ -1,4 +1,4 @@
-# 💧 Arduino Smart Humidity Monitor & Alert System
+# Arduino Smart Humidity Monitor & Alert System
 
 > *An Internet-connected humidity and temperature monitoring system built with Arduino Uno R4 WiFi, the Adafruit Si7021 sensor, and a cloud-based alert dashboard. Perfect for terrariums, indoor plant environments, or home humidity control.*
 
@@ -10,24 +10,9 @@
 </p>
 **Note that TinkerCAD diagram is missing the Si7021 humidity module**
 
-## 📋 Table of Contents
-- [About](#-about)
-- [Features](#-features)
-- [How It Works](#-how-it-works)
-- [Getting Started](#-getting-started)
-  - [Hardware Requirements](#hardware-requirements)
-  - [Software Requirements](#software-requirements)
-  - [Hardware Setup](#hardware-setup)
-  - [Software Installation](#software-installation)
-- [Usage](#-usage)
-- [Configuration](#️-configuration)
-- [Web Dashboard](#-web-dashboard)
-- [Contributing](#-contributing)
-- [License](#-license)
-
 ---
 
-## 🧩 About
+## About
 
 ### What problem does this solve?
 Maintaining proper humidity levels is critical for both specialized environments like terrariums and everyday living spaces. This project provides a comprehensive solution for:
@@ -48,7 +33,7 @@ The system creates a complete monitoring loop:
 
 ---
 
-## ✨ Features
+## Features
 
 - [x] **Live Environmental Monitoring** — Continuous humidity and temperature readings with 2 decimal place precision
 - [x] **Dual Operating Modes**
@@ -71,7 +56,7 @@ The system creates a complete monitoring loop:
 
 ---
 
-## 🔄 How It Works
+## How It Works
 
 The system operates as a complete monitoring loop:
 
@@ -98,7 +83,7 @@ The system operates as a complete monitoring loop:
 
 ---
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Hardware Requirements
 
@@ -195,7 +180,7 @@ see readme content for pin connections
 
 ---
 
-## 📝 Usage
+## Usage
 
 ### Local Operation
 
@@ -227,7 +212,7 @@ see readme content for pin connections
 
 ---
 
-## ⚙️ Configuration
+## Configuration
 
 ### Arduino Configuration
 
@@ -273,7 +258,7 @@ The Flask server can be configured using environment variables:
 
 ---
 
-## 🖥 Web Dashboard
+## Web Dashboard
 
 The web dashboard provides a simple interface to monitor your system's status from anywhere:
 
@@ -304,16 +289,6 @@ The web dashboard provides a simple interface to monitor your system's status fr
 
 <img src="./assets/goodPage.png" alt="webpage of good state" width="600">
 <img src="./assets/criticalPage.png" alt="webpage of bad state" width="600">
-
----
-
-## 🤝 Contributing
-
-1. Fork the project 
-2. Create your feature branch (`git checkout -b feature/feature-name`)
-3. Commit your changes (`git commit -m "Add feature"`)
-4. Push to the branch (`git push origin feature/feature-name`)
-5. Open a pull request
 
 ---
 
